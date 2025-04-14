@@ -15,8 +15,11 @@ mod switch;
 mod task;
 
 use crate::loader::{get_app_data, get_num_app};
+use crate::mm::{MapPermission, VirtAddr};
 use crate::sync::UPSafeCell;
 use crate::trap::TrapContext;
+use alloc::collections::btree_map::BTreeMap;
+use alloc::vec;
 use alloc::vec::Vec;
 use lazy_static::*;
 use switch::__switch;
@@ -46,6 +49,8 @@ struct TaskManagerInner {
     tasks: Vec<TaskControlBlock>,
     /// id of current `Running` task
     current_task: usize,
+    /// syscall record
+    records: Vec<BTreeMap<usize, isize>>,
 }
 
 lazy_static! {
@@ -58,12 +63,14 @@ lazy_static! {
         for i in 0..num_app {
             tasks.push(TaskControlBlock::new(get_app_data(i), i));
         }
+        let records = vec![BTreeMap::default(); num_app];
         TaskManager {
             num_app,
             inner: unsafe {
                 UPSafeCell::new(TaskManagerInner {
                     tasks,
                     current_task: 0,
+                    records
                 })
             },
         }
@@ -153,6 +160,73 @@ impl TaskManager {
             panic!("All applications completed!");
         }
     }
+
+    /// 记录syscall_id 次数
+    pub fn record_syscall(&self, syscall_id: usize) {
+        let mut inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        inner.records[current]
+            .entry(syscall_id)
+            .and_modify(|v| *v += 1)
+            .or_insert(1);
+    }
+
+    /// 返回syscall_id次数
+    pub fn count_syscall(&self, syscall_id: usize) -> isize {
+        let inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        inner.records[current]
+            .get(&syscall_id)
+            .cloned()
+            .unwrap_or(0)
+    }
+
+    /// mmap一段逻辑段
+    pub fn mmap(&self, start: usize, len: usize, prot: usize) -> isize {
+        // 检查prot是否合法，仅允许R,W,X
+        if prot & !0x7 != 0 || prot & 0x7 == 0 {
+            return -1;
+        }
+        // 将prot转换为MapPermission
+        let mut perm = MapPermission::U;
+        if prot & 0x1 != 0 {
+            perm |= MapPermission::R;
+        }
+        if prot & 0x2 != 0 {
+            perm |= MapPermission::W;
+        }
+        if prot & 0x4 != 0 {
+            perm |= MapPermission::X;
+        }
+        // 检查start是否4k对齐
+        if start & 0xfff != 0 {
+            return -1;
+        }
+
+        let mut inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        let memory_set = &mut inner.tasks[current].memory_set;
+        // 检查是否存在重叠区域
+        if memory_set.overlaps(VirtAddr::from(start), VirtAddr::from(start + len)) {
+            return -1;
+        }
+        memory_set.insert_framed_area(VirtAddr::from(start), VirtAddr::from(start + len), perm);
+        0
+    }
+
+    /// unmap一段逻辑段
+    pub fn munmap(&self, start: usize, len: usize) -> isize {
+        // 检查start是否4k对齐
+        if start & 0xfff != 0 {
+            return -1;
+        }
+
+        let mut inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        let memory_set = &mut inner.tasks[current].memory_set;
+
+        memory_set.remove_area(VirtAddr::from(start), VirtAddr::from(start + len))
+    }
 }
 
 /// Run the first task in task list.
@@ -201,4 +275,24 @@ pub fn current_trap_cx() -> &'static mut TrapContext {
 /// Change the current 'Running' task's program break
 pub fn change_program_brk(size: i32) -> Option<usize> {
     TASK_MANAGER.change_current_program_brk(size)
+}
+
+/// sys_trace用 记录syscall次数
+pub fn record_syscall(syscall_id: usize) {
+    TASK_MANAGER.record_syscall(syscall_id)
+}
+
+/// sys_trace用 返回指定syscall_id的次数
+pub fn count_syscall(syscall_id: usize) -> isize {
+    TASK_MANAGER.count_syscall(syscall_id)
+}
+
+/// sys_mmap，映射一段逻辑段
+pub fn mmap(start: usize, len: usize, prot: usize) -> isize {
+    TASK_MANAGER.mmap(start, len, prot)
+}
+
+/// sys_munmap，取消映射一段逻辑段
+pub fn munmap(start: usize, len: usize) -> isize {
+    TASK_MANAGER.munmap(start, len)
 }

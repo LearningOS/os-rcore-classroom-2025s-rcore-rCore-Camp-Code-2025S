@@ -262,12 +262,43 @@ impl MemorySet {
             false
         }
     }
+
+    /// 检查是否存在重叠区域
+    pub fn overlaps(&self, start: VirtAddr, end: VirtAddr) -> bool {
+        self.areas.iter().any(|area| {
+            // 不用考虑等号，因为虚拟页号范围是[vpn_range.get_start(), vpn_range.get_end())
+            area.vpn_range.get_start() < end.ceil() && area.vpn_range.get_end() > start.floor()
+        })
+    }
+
+    /// 取消映射一段逻辑段
+    pub fn remove_area(&mut self, start: VirtAddr, end: VirtAddr) -> isize {
+        // 找到需要取消映射的区域
+        let index = self.areas.iter().position(|area| {
+            area.vpn_range.get_start() == start.floor() && area.vpn_range.get_end() == end.ceil()
+        });
+        // 取消映射
+        if let Some(index) = index {
+            let mut area = self.areas.remove(index);
+            area.unmap(&mut self.page_table);
+            0
+        } else {
+            -1
+        }
+    }
 }
 /// map area structure, controls a contiguous piece of virtual memory
+/// 控制一段连续的虚拟内存
+/// range: [vpn_range.get_start(), vpn_range.get_end())
+#[derive(Debug)]
 pub struct MapArea {
+    /// 虚拟页号范围 [vpn_range.get_start(), vpn_range.get_end())
     vpn_range: VPNRange,
+    /// 数据帧
     data_frames: BTreeMap<VirtPageNum, FrameTracker>,
+    /// 映射类型
     map_type: MapType,
+    /// 映射权限
     map_perm: MapPermission,
 }
 
@@ -302,7 +333,6 @@ impl MapArea {
         let pte_flags = PTEFlags::from_bits(self.map_perm.bits).unwrap();
         page_table.map(vpn, ppn, pte_flags);
     }
-    #[allow(unused)]
     pub fn unmap_one(&mut self, page_table: &mut PageTable, vpn: VirtPageNum) {
         if self.map_type == MapType::Framed {
             self.data_frames.remove(&vpn);
@@ -314,20 +344,17 @@ impl MapArea {
             self.map_one(page_table, vpn);
         }
     }
-    #[allow(unused)]
     pub fn unmap(&mut self, page_table: &mut PageTable) {
         for vpn in self.vpn_range {
             self.unmap_one(page_table, vpn);
         }
     }
-    #[allow(unused)]
     pub fn shrink_to(&mut self, page_table: &mut PageTable, new_end: VirtPageNum) {
         for vpn in VPNRange::new(new_end, self.vpn_range.get_end()) {
             self.unmap_one(page_table, vpn)
         }
         self.vpn_range = VPNRange::new(self.vpn_range.get_start(), new_end);
     }
-    #[allow(unused)]
     pub fn append_to(&mut self, page_table: &mut PageTable, new_end: VirtPageNum) {
         for vpn in VPNRange::new(self.vpn_range.get_end(), new_end) {
             self.map_one(page_table, vpn)
