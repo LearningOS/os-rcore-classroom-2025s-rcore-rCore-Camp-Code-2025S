@@ -22,6 +22,7 @@ impl TaskManager {
         self.ready_queue.push_back(task);
     }
     /// Take a process out of the ready queue
+    /// 取出下一个任务
     pub fn fetch(&mut self) -> Option<Arc<TaskControlBlock>> {
         self.ready_queue.pop_front()
     }
@@ -29,18 +30,21 @@ impl TaskManager {
 
 lazy_static! {
     /// TASK_MANAGER instance through lazy_static!
-    pub static ref TASK_MANAGER: UPSafeCell<TaskManager> =
-        unsafe { UPSafeCell::new(TaskManager::new()) };
+    pub static ref TASK_MANAGER: UPSafeCell<TaskManager> = unsafe {
+        UPSafeCell::new(TaskManager::new())
+    };
 }
 
 /// Add process to ready queue
 pub fn add_task(task: Arc<TaskControlBlock>) {
     //trace!("kernel: TaskManager::add_task");
+    //首先独占 然后添加task
     TASK_MANAGER.exclusive_access().add(task);
 }
 
 /// Take a process out of the ready queue
 pub fn fetch_task() -> Option<Arc<TaskControlBlock>> {
     //trace!("kernel: TaskManager::fetch_task");
+    //取出任务
     TASK_MANAGER.exclusive_access().fetch()
 }

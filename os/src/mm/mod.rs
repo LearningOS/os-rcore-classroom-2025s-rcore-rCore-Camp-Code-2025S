@@ -20,7 +20,7 @@ pub use page_table::{translated_byte_buffer, translated_refmut, translated_str, 
 use page_table::{PTEFlags, PageTable};
 /// initiate heap allocator, frame allocator and kernel space
 pub fn init() {
-    heap_allocator::init_heap();
-    frame_allocator::init_frame_allocator();
+    heap_allocator::init_heap(); //全局动态内存分配器的初始化
+    frame_allocator::init_frame_allocator(); //物理页帧管理器 初始化
     KERNEL_SPACE.exclusive_access().activate();
 }

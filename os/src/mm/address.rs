@@ -8,6 +8,7 @@ const VA_WIDTH_SV39: usize = 39;
 const PPN_WIDTH_SV39: usize = PA_WIDTH_SV39 - PAGE_SIZE_BITS;
 const VPN_WIDTH_SV39: usize = VA_WIDTH_SV39 - PAGE_SIZE_BITS;
 
+///以下的四中类型都是usize
 /// physical address
 #[derive(Copy, Clone, Ord, PartialOrd, Eq, PartialEq)]
 pub struct PhysAddr(pub usize);
@@ -97,6 +98,7 @@ impl VirtAddr {
     /// Get the (floor) virtual page number
     pub fn floor(&self) -> VirtPageNum {
         VirtPageNum(self.0 / PAGE_SIZE)
+        //PAGE_SIZE是4KB
     }
 
     /// Get the (ceil) virtual page number
@@ -157,6 +159,8 @@ impl From<PhysPageNum> for PhysAddr {
 
 impl VirtPageNum {
     /// Get the indexes of the page table entry
+    /// 将虚拟页号（VPN）拆解为 3个9位索引，用于三级页表查询
+    /// VPN = 0x123456 得到 [0x12,0x34,0x56]
     pub fn indexes(&self) -> [usize; 3] {
         let mut vpn = self.0;
         let mut idx = [0usize; 3];
@@ -178,16 +182,19 @@ impl PhysAddr {
 impl PhysPageNum {
     /// Get the reference of page table(array of ptes)
     pub fn get_pte_array(&self) -> &'static mut [PageTableEntry] {
+        //物理页号转换为 物理地址 PhysAddr  返回页表项数组
         let pa: PhysAddr = (*self).into();
         unsafe { core::slice::from_raw_parts_mut(pa.0 as *mut PageTableEntry, 512) }
     }
     /// Get the reference of page(array of bytes)
     pub fn get_bytes_array(&self) -> &'static mut [u8] {
+        //物理页号转换为 物理地址 PhysAddr  返回字节数组
         let pa: PhysAddr = (*self).into();
         unsafe { core::slice::from_raw_parts_mut(pa.0 as *mut u8, 4096) }
     }
     /// Get the mutable reference of physical address
     pub fn get_mut<T>(&self) -> &'static mut T {
+        //范形
         let pa: PhysAddr = (*self).into();
         pa.get_mut()
     }
@@ -270,4 +277,5 @@ where
     }
 }
 /// a simple range structure for virtual page number
-pub type VPNRange = SimpleRange<VirtPageNum>;
+/// VPNRange 描述一段虚拟页号的连续区间，表示该逻辑段在地址区间中的位置和长度
+pub type VPNRange = SimpleRange<VirtPageNum>; //
