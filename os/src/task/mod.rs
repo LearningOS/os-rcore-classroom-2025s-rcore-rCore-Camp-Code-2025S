@@ -33,9 +33,12 @@ pub use task::{TaskControlBlock, TaskStatus};
 pub use id::{kstack_alloc, pid_alloc, KernelStack, PidHandle};
 pub use manager::add_task;
 pub use processor::{
-    current_task, current_trap_cx, current_user_token, run_tasks, schedule, take_current_task,
+    current_task, current_trap_cx, current_user_token, run_tasks, schedule, take_current_task, set_task_priority,
     Processor,
 };
+
+const BIG_STRIDE: usize = 255;
+
 /// Suspend the current 'Running' task and run the next task in task list.
 pub fn suspend_current_and_run_next() {
     // There must be an application running.
@@ -46,6 +49,8 @@ pub fn suspend_current_and_run_next() {
     let task_cx_ptr = &mut task_inner.task_cx as *mut TaskContext;
     // Change status to Ready
     task_inner.task_status = TaskStatus::Ready;
+    // update task stride
+    task_inner.stride = task_inner.stride + BIG_STRIDE / task_inner.priority;
     drop(task_inner);
     // ---- release current PCB
 
@@ -119,4 +124,22 @@ lazy_static! {
 ///Add init process to the manager
 pub fn add_initproc() {
     add_task(INITPROC.clone());
+}
+
+/// Mmap a new area in the current task's memory space
+pub fn mmap_in_current_task(start: usize, len: usize, prot: usize,) -> isize {
+    current_task()
+    .unwrap()
+    .inner_exclusive_access()
+    .memory_set
+    .mmap(start, len, prot)
+}
+
+/// Unmap an area in the current task's memory space
+pub fn munmap_in_current_task(start: usize, len: usize) -> isize {
+    current_task()
+    .unwrap()
+    .inner_exclusive_access()
+    .memory_set
+    .munmap(start, len)
 }

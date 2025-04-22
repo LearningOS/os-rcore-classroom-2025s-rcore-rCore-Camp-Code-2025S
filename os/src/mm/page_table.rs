@@ -1,4 +1,6 @@
 //! Implementation of [`PageTableEntry`] and [`PageTable`].
+use crate::task::current_user_token;
+
 use super::{frame_alloc, FrameTracker, PhysAddr, PhysPageNum, StepByOne, VirtAddr, VirtPageNum};
 use alloc::string::String;
 use alloc::vec;
@@ -274,5 +276,20 @@ impl Iterator for UserBufferIterator {
             }
             Some(r)
         }
+    }
+}
+
+/// Find pte by virtual address in current memory set
+pub fn translate_virtual_address(va: VirtAddr) -> (Option<PageTableEntry>, Option<PhysAddr>) {
+    let page_table = PageTable::from_token(current_user_token());
+    match page_table.translate(va.floor()) {
+        Some(pte) => {
+            if pte.is_valid() {
+                (Some(pte), Some((PhysAddr::from(pte.ppn()).0 + va.page_offset()).into()))
+            } else {
+                (None, None)
+            }
+        },
+        None => (None, None)
     }
 }

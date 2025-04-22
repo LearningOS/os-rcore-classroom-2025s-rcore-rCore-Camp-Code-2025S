@@ -1,6 +1,7 @@
 //! File and filesystem-related syscalls
-use crate::fs::{open_file, OpenFlags, Stat};
-use crate::mm::{translated_byte_buffer, translated_str, UserBuffer};
+
+use crate::fs::{link_file, open_file, unlink_file, OpenFlags, Stat};
+use crate::mm::{translated_byte_buffer, translated_str, PageTable, UserBuffer, VirtAddr};
 use crate::task::{current_task, current_user_token};
 
 pub fn sys_write(fd: usize, buf: *const u8, len: usize) -> isize {
@@ -77,27 +78,42 @@ pub fn sys_close(fd: usize) -> isize {
 
 /// YOUR JOB: Implement fstat.
 pub fn sys_fstat(_fd: usize, _st: *mut Stat) -> isize {
-    trace!(
-        "kernel:pid[{}] sys_fstat NOT IMPLEMENTED",
-        current_task().unwrap().pid.0
-    );
+    let task = current_task().unwrap();
+    let token = task.get_user_token();
+    let inner = task.inner_exclusive_access();
+    if _fd >= inner.fd_table.len() {
+        return -1;
+    }
+    if let Some(file) = &inner.fd_table[_fd] {  
+        let page_table = PageTable::from_token(token);
+        if let Some(pa) = page_table.translate_va(VirtAddr::from(_st as usize)) {
+            let st = pa.0 as *mut Stat;
+            return file.fstat(st);
+        } 
+    }
     -1
 }
 
 /// YOUR JOB: Implement linkat.
 pub fn sys_linkat(_old_name: *const u8, _new_name: *const u8) -> isize {
-    trace!(
-        "kernel:pid[{}] sys_linkat NOT IMPLEMENTED",
-        current_task().unwrap().pid.0
-    );
-    -1
+    let token = current_user_token();
+    let old_path = translated_str(token, _old_name);
+    let new_path = translated_str(token, _new_name);
+    if old_path == new_path {
+        return -1;
+    }
+    if !link_file(&old_path, &new_path) {
+        return -1;
+    }
+    0
 }
 
 /// YOUR JOB: Implement unlinkat.
 pub fn sys_unlinkat(_name: *const u8) -> isize {
-    trace!(
-        "kernel:pid[{}] sys_unlinkat NOT IMPLEMENTED",
-        current_task().unwrap().pid.0
-    );
-    -1
+    let token = current_user_token();
+    let name = translated_str(token, _name);
+    if !unlink_file(&name) {
+        return -1;
+    }
+    0
 }

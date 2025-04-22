@@ -44,6 +44,13 @@ impl Processor {
     pub fn current(&self) -> Option<Arc<TaskControlBlock>> {
         self.current.as_ref().map(Arc::clone)
     }
+
+    /// Set current task's priority
+    pub fn set_current_priority(&mut self, priority: usize) {
+        if let Some(task) = &self.current {
+            task.inner_exclusive_access().priority = priority;
+        }
+    }
 }
 
 lazy_static! {
@@ -108,4 +115,10 @@ pub fn schedule(switched_task_cx_ptr: *mut TaskContext) {
     unsafe {
         __switch(switched_task_cx_ptr, idle_task_cx_ptr);
     }
+}
+
+/// Set current task's priority
+pub fn set_task_priority(priority: usize) {
+    let mut processor = PROCESSOR.exclusive_access();
+    processor.set_current_priority(priority);
 }

@@ -4,11 +4,10 @@ use alloc::sync::Arc;
 
 use crate::{
     fs::{open_file, OpenFlags},
-    mm::{translated_refmut, translated_str},
+    mm::{translate_virtual_address, translated_refmut, translated_str, VirtAddr, VirtPageNum},
     task::{
-        add_task, current_task, current_user_token, exit_current_and_run_next,
-        suspend_current_and_run_next,
-    },
+        add_task, current_task, current_user_token, exit_current_and_run_next, mmap_in_current_task, munmap_in_current_task, set_task_priority, suspend_current_and_run_next, TaskControlBlock
+    }, timer::get_time_us,
 };
 
 #[repr(C)]
@@ -106,29 +105,55 @@ pub fn sys_waitpid(pid: isize, exit_code_ptr: *mut i32) -> isize {
 /// HINT: You might reimplement it with virtual memory management.
 /// HINT: What if [`TimeVal`] is splitted by two pages ?
 pub fn sys_get_time(_ts: *mut TimeVal, _tz: usize) -> isize {
-    trace!(
-        "kernel:pid[{}] sys_get_time NOT IMPLEMENTED",
-        current_task().unwrap().pid.0
-    );
-    -1
+    let start_va = _ts as usize;
+    let start_vpn = VirtPageNum::from(start_va);
+    let end_va = start_va + core::mem::size_of::<TimeVal>();
+    let end_vpn = VirtPageNum::from(end_va);
+    let us = get_time_us();
+    if start_vpn == end_vpn {
+        let (pte, pa) = 
+        translate_virtual_address(VirtAddr::from(start_va));
+        if pte.is_none() || !pte.unwrap().writable() {
+            return -1;
+        }
+        let ts = pa.unwrap().0;
+        unsafe {
+            *(ts as *mut TimeVal) = TimeVal {
+                sec: us / 1_000_000,
+                usec: us % 1_000_000,
+            };
+        }
+        0
+    } else {
+        let (pte, pa) = 
+        translate_virtual_address(VirtAddr::from(start_va));
+        let (epte, _epa) = 
+        translate_virtual_address(VirtAddr::from(end_va));
+        if pte.is_some() && epte.is_some() 
+        && pte.unwrap().writable() 
+        && epte.unwrap().writable() {
+            let ts = pa.unwrap().0;
+            unsafe {
+                *(ts as *mut TimeVal) = TimeVal {
+                    sec: us / 1_000_000,
+                    usec: us % 1_000_000,
+                };
+            }
+            0
+        } else {
+            -1
+        }
+    }
 }
 
 /// YOUR JOB: Implement mmap.
 pub fn sys_mmap(_start: usize, _len: usize, _port: usize) -> isize {
-    trace!(
-        "kernel:pid[{}] sys_mmap NOT IMPLEMENTED",
-        current_task().unwrap().pid.0
-    );
-    -1
+    mmap_in_current_task(_start, _len, _port)
 }
 
 /// YOUR JOB: Implement munmap.
 pub fn sys_munmap(_start: usize, _len: usize) -> isize {
-    trace!(
-        "kernel:pid[{}] sys_munmap NOT IMPLEMENTED",
-        current_task().unwrap().pid.0
-    );
-    -1
+    munmap_in_current_task(_start, _len)
 }
 
 /// change data segment size
@@ -144,18 +169,31 @@ pub fn sys_sbrk(size: i32) -> isize {
 /// YOUR JOB: Implement spawn.
 /// HINT: fork + exec =/= spawn
 pub fn sys_spawn(_path: *const u8) -> isize {
-    trace!(
-        "kernel:pid[{}] sys_spawn NOT IMPLEMENTED",
-        current_task().unwrap().pid.0
-    );
-    -1
+    let token = current_user_token();
+    let path = translated_str(token, _path);
+    if let Some(app_inode) = open_file(path.as_str(), OpenFlags::RDONLY) {
+        let all_data = app_inode.read_all();
+        let current_task = current_task().unwrap();
+        let mut current_inner = current_task.inner_exclusive_access();
+        let new_task = Arc::new(TaskControlBlock::new(all_data.as_slice()));
+        let mut new_inner = new_task.inner_exclusive_access();
+        new_inner.parent = Some(Arc::downgrade(&current_task));
+        current_inner.children.push(new_task.clone());
+        drop(current_inner);
+        drop(new_inner);
+        let new_pid = new_task.pid.0;
+        add_task(new_task);
+        new_pid as isize
+    } else {
+        -1
+    }
 }
 
 // YOUR JOB: Set task priority.
 pub fn sys_set_priority(_prio: isize) -> isize {
-    trace!(
-        "kernel:pid[{}] sys_set_priority NOT IMPLEMENTED",
-        current_task().unwrap().pid.0
-    );
-    -1
+    if _prio < 2 {
+        return -1;
+    }
+    set_task_priority(_prio as usize);
+    _prio
 }
