@@ -63,6 +63,29 @@ impl MemorySet {
             None,
         );
     }
+
+    /// Unmap a area
+    pub fn remove_framed_area(
+        &mut self,
+        start_va: VirtAddr,
+        end_va: VirtAddr,
+    ) -> isize {
+        let start_vpn: VirtPageNum = start_va.floor();
+        let end_vpn: VirtPageNum = end_va.ceil();
+        let vpns = VPNRange::new(start_vpn, end_vpn);
+        for vpn in vpns {
+            if let Some(pte) = self.page_table.translate(vpn) {
+                if !pte.is_valid() {
+                    return -1;
+                }
+                self.page_table.unmap(vpn);
+            } else {
+                return -1;
+            }
+        }
+        0
+    }
+
     fn push(&mut self, mut map_area: MapArea, data: Option<&[u8]>) {
         map_area.map(&mut self.page_table);
         if let Some(data) = data {
@@ -385,6 +408,8 @@ pub fn kernel_stack_position(app_id: usize) -> (usize, usize) {
     let bottom = top - KERNEL_STACK_SIZE;
     (bottom, top)
 }
+
+
 
 /// remap test in kernel space
 #[allow(unused)]

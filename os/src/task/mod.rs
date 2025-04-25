@@ -14,6 +14,7 @@ mod switch;
 #[allow(clippy::module_inception)]
 mod task;
 
+use crate::config::MAX_SYSCALL_NUM;
 use crate::loader::{get_app_data, get_num_app};
 use crate::sync::UPSafeCell;
 use crate::trap::TrapContext;
@@ -21,6 +22,7 @@ use alloc::vec::Vec;
 use lazy_static::*;
 use switch::__switch;
 pub use task::{TaskControlBlock, TaskStatus};
+use crate::mm::{VirtAddr, MapPermission};
 
 pub use context::TaskContext;
 
@@ -153,6 +155,46 @@ impl TaskManager {
             panic!("All applications completed!");
         }
     }
+
+    // syscall_num_inc
+    fn syscall_num_inc(&self, id: usize) {
+        let mut inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        if id <= MAX_SYSCALL_NUM {
+            inner.tasks[current].task_syscall_num[id] += 1;
+        }
+    }
+
+    fn get_syscall_times(&self, id: usize) -> u8{
+        let inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        inner.tasks[current].task_syscall_num[id]
+    }
+
+    fn map_new_area(&self, start_va: VirtAddr,
+        end_va: VirtAddr,
+        permission: MapPermission) -> () {
+            let mut inner = self.inner.exclusive_access();
+            let cur = inner.current_task;
+            inner.tasks[cur].map_virtual_area(start_va, end_va, permission);
+    }
+
+    fn munmap_used_area(&self, start_va: VirtAddr, end_va: VirtAddr) -> isize {
+        let mut inner = self.inner.exclusive_access();
+            let cur = inner.current_task;
+            let res = inner.tasks[cur].memory_set.remove_framed_area(start_va, end_va);
+            res
+    }
+}
+
+/// increase num_syscall[id]
+pub fn syscall_num_inc(id: usize) {
+    TASK_MANAGER.syscall_num_inc(id);
+}
+
+/// Get the number of times the syscall with call number id is used.
+pub fn get_syscall_times(id: usize) -> u8{
+    TASK_MANAGER.get_syscall_times(id)
 }
 
 /// Run the first task in task list.
@@ -191,6 +233,18 @@ pub fn exit_current_and_run_next() {
 /// Get the current 'Running' task's token.
 pub fn current_user_token() -> usize {
     TASK_MANAGER.get_current_token()
+}
+
+/// Map a new virtual area
+pub fn map_new_area(start_va: VirtAddr,
+    end_va: VirtAddr,
+    permission: MapPermission) -> () {
+    TASK_MANAGER.map_new_area(start_va, end_va, permission);
+}
+
+///
+pub fn munmap_used_area(start_va: VirtAddr, end_va: VirtAddr) -> isize{
+    TASK_MANAGER.munmap_used_area(start_va, end_va)
 }
 
 /// Get the current 'Running' task's trap contexts.
