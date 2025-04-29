@@ -40,6 +40,7 @@ pub fn kernel_token() -> usize {
 pub struct MemorySet {
     page_table: PageTable,
     areas: Vec<MapArea>,
+    map_tree: BTreeMap<VirtPageNum, FrameTracker>,
 }
 
 impl MemorySet {
@@ -48,6 +49,7 @@ impl MemorySet {
         Self {
             page_table: PageTable::new(),
             areas: Vec::new(),
+            map_tree: BTreeMap::new(),
         }
     }
     /// Get the page table token
@@ -317,6 +319,95 @@ impl MemorySet {
         } else {
             false
         }
+    }
+
+    ///mmap
+    pub fn mmap(&mut self, start: usize, len: usize, port: usize) -> isize {
+        let va_start: VirtAddr = start.into();
+        if !va_start.aligned() {
+            return -1;
+        }
+        let mut va_start: VirtPageNum = va_start.into();
+
+        // Check port validity
+        if port == 0 || (port & !0b111) != 0 {
+            return -1;
+        }
+
+        let mut flags = PTEFlags::from_bits(port as u8).unwrap();
+        if port & 0b0000_0001 != 0 {
+            flags |= PTEFlags::R;
+        }
+        if port & 0b0000_0010 != 0 {
+            flags |= PTEFlags::W;
+        }
+        if port & 0b0000_0100 != 0 {
+            flags |= PTEFlags::X;
+        }
+        flags |= PTEFlags::U;
+        flags |= PTEFlags::V;
+
+        let va_end: VirtAddr = (start + len).into();
+        
+        let va_end: VirtPageNum = va_end.ceil();
+
+        // Check for overlapping
+        let mut check_vpn = va_start;
+        while check_vpn != va_end {
+            if let Some(pte) = self.page_table.translate(check_vpn) {
+                if pte.is_valid() {
+                    return -1;
+                }
+            }
+            check_vpn.step();
+        }
+
+        while va_start != va_end {
+            if let Some(ppn) = frame_alloc() {
+                self.page_table.map(va_start, ppn.ppn, flags);
+                self.map_tree.insert(va_start, ppn);
+            } else {
+                return -1;
+            }
+            va_start.step();
+        }
+        0
+    }
+
+    /// munmap
+    pub fn munmap(&mut self, start: usize, len: usize) -> isize {
+        let va_start: VirtAddr = start.into();
+        if !va_start.aligned() {
+            return -1;
+        }
+        let mut va_start: VirtPageNum = va_start.into();
+
+        let va_end: VirtAddr = (start + len).into();
+        
+        let va_end: VirtPageNum = va_end.ceil();
+
+        // First check if all pages are mapped
+        let mut check_vpn = va_start;
+        while check_vpn != va_end {
+            match self.page_table.translate(check_vpn) {
+                Some(pte) => {
+                    if !pte.is_valid() {
+                        return -1;
+                    }
+                }
+                None => {
+                    return -1;
+                }
+            }
+            check_vpn.step();
+        }
+
+        while va_start != va_end {
+            self.page_table.unmap(va_start);
+            self.map_tree.remove(&va_start);
+            va_start.step();
+        }
+        0
     }
 }
 /// map area structure, controls a contiguous piece of virtual memory

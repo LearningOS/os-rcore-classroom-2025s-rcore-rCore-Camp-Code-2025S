@@ -4,7 +4,7 @@
 //!
 //! `UPSafeCell<OSInodeInner>` -> `OSInode`: for static `ROOT_INODE`,we
 //! need to wrap `OSInodeInner` into `UPSafeCell`
-use super::File;
+use super::{File, Stat, StatMode};
 use crate::drivers::BLOCK_DEVICE;
 use crate::mm::UserBuffer;
 use crate::sync::UPSafeCell;
@@ -155,5 +155,53 @@ impl File for OSInode {
             total_write_size += write_size;
         }
         total_write_size
+    }
+    fn fstat(&self) -> Stat {
+        let inner = self.inner.exclusive_access();
+        let inode_id = inner.inode.get_inode_id();
+        let file_type = if inner.inode.is_dir() {
+            StatMode::DIR
+        } else {
+            StatMode::FILE
+        };
+        let link_num = inner.inode.get_link_num();
+        Stat {
+            dev: 0,
+            ino: inode_id as u64,
+            mode: file_type,
+            link_num: link_num,
+            pad: [0; 7],
+        }
+    }
+}
+
+/// linkat a file 
+pub fn linkat(old_name: &str, new_name: &str) -> Option<Arc<OSInode>> {
+    if old_name == new_name {
+        return None;
+    }
+
+    if let Some(old_inode) = open_file(old_name, OpenFlags::RDONLY) {
+        let old_inner = old_inode.inner.exclusive_access();
+        old_inner.inode.increase_link_num();
+        let id = old_inner.inode.get_inode_id();
+        ROOT_INODE.linkat(id, new_name);
+        Some(Arc::new(OSInode::new(old_inode.readable, old_inode.writable, Arc::clone(&old_inner.inode))))
+    } else {
+        None
+    }
+}
+
+/// unlinkat a file 
+pub fn unlinkat(name: &str) -> Result<(), ()> {
+    if let Some(inode) = ROOT_INODE.find(name) {
+        let n = inode.decrease_link_num();
+        if n == 0 {
+            inode.clear();
+            ROOT_INODE.remove_entry(name);
+        }
+        Ok(())
+    } else {
+        Err(())
     }
 }

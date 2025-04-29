@@ -109,3 +109,14 @@ pub fn schedule(switched_task_cx_ptr: *mut TaskContext) {
         __switch(switched_task_cx_ptr, idle_task_cx_ptr);
     }
 }
+
+
+///get mmap
+pub fn get_mmap(va_start: usize, len: usize, port: usize) -> isize {
+    current_task().unwrap().get_mmap(va_start, len, port)
+}
+
+///get munmap
+pub fn get_munmap(va_start: usize, len: usize) -> isize {
+    current_task().unwrap().get_munmap(va_start, len)
+}

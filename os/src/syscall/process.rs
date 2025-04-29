@@ -4,11 +4,12 @@ use alloc::sync::Arc;
 
 use crate::{
     fs::{open_file, OpenFlags},
-    mm::{translated_refmut, translated_str},
+    mm::{translated_refmut, translated_str,translated_byte_buffer},
     task::{
         add_task, current_task, current_user_token, exit_current_and_run_next,
-        suspend_current_and_run_next,
+        suspend_current_and_run_next,get_mmap, get_munmap,
     },
+    timer::get_time_us,
 };
 
 #[repr(C)]
@@ -105,12 +106,39 @@ pub fn sys_waitpid(pid: isize, exit_code_ptr: *mut i32) -> isize {
 /// YOUR JOB: get time with second and microsecond
 /// HINT: You might reimplement it with virtual memory management.
 /// HINT: What if [`TimeVal`] is splitted by two pages ?
-pub fn sys_get_time(_ts: *mut TimeVal, _tz: usize) -> isize {
+pub fn sys_get_time(ts: *mut TimeVal, _tz: usize) -> isize {
     trace!(
         "kernel:pid[{}] sys_get_time NOT IMPLEMENTED",
         current_task().unwrap().pid.0
     );
-    -1
+    let token = current_user_token();
+    let size = core::mem::size_of::<TimeVal>();
+    
+    let mut buffers = translated_byte_buffer(token, ts as *const u8, size);
+    
+    let us = get_time_us();
+    let time_val = TimeVal {
+        sec: us / 1_000_000,
+        usec: us % 1_000_000,
+    };
+    
+    let time_val_bytes = unsafe {
+        core::slice::from_raw_parts(
+            &time_val as *const _ as *const u8,
+            size
+        )
+    };
+    
+    let mut bytes_written = 0;
+    for buffer in buffers.iter_mut() {
+        let len = buffer.len().min(time_val_bytes.len() - bytes_written);
+        if len == 0 {
+            break;
+        }
+        buffer[..len].copy_from_slice(&time_val_bytes[bytes_written..bytes_written + len]);
+        bytes_written += len;
+    }
+    0
 }
 
 /// YOUR JOB: Implement mmap.
@@ -119,7 +147,7 @@ pub fn sys_mmap(_start: usize, _len: usize, _port: usize) -> isize {
         "kernel:pid[{}] sys_mmap NOT IMPLEMENTED",
         current_task().unwrap().pid.0
     );
-    -1
+    get_mmap(_start, _len, _port)
 }
 
 /// YOUR JOB: Implement munmap.
@@ -128,7 +156,7 @@ pub fn sys_munmap(_start: usize, _len: usize) -> isize {
         "kernel:pid[{}] sys_munmap NOT IMPLEMENTED",
         current_task().unwrap().pid.0
     );
-    -1
+    get_munmap(_start, _len)
 }
 
 /// change data segment size
@@ -148,7 +176,23 @@ pub fn sys_spawn(_path: *const u8) -> isize {
         "kernel:pid[{}] sys_spawn NOT IMPLEMENTED",
         current_task().unwrap().pid.0
     );
-    -1
+    let path = translated_str(current_user_token(), _path);
+    if let Some(app_inode) = open_file(path.as_str(), OpenFlags::RDONLY) {
+        let data = app_inode.read_all();
+        let task = current_task().unwrap();
+        let new_task = task.spawn(data.as_slice());
+        let new_pid = new_task.pid.0;
+        // modify trap context of new_task, because it returns immediately after switching
+        let trap_cx = new_task.inner_exclusive_access().get_trap_cx();
+        // we do not have to move to next instruction since we have done it before
+        // for child process, fork returns 0
+        trap_cx.x[10] = 0;
+        // add new task to scheduler
+        add_task(new_task);
+        new_pid as isize
+    } else {
+        -1
+    }
 }
 
 // YOUR JOB: Set task priority.
@@ -157,5 +201,11 @@ pub fn sys_set_priority(_prio: isize) -> isize {
         "kernel:pid[{}] sys_set_priority NOT IMPLEMENTED",
         current_task().unwrap().pid.0
     );
-    -1
+    if _prio < 2 {
+        -1
+    } else {
+        let task = current_task().unwrap();
+        task.set_priority(_prio);
+        _prio
+    }
 }
