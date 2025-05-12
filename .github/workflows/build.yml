@@ -37,9 +37,22 @@ jobs:
           unset RUSTUP_UPDATE_ROOT
           unset CARGO_HTTP_MULTIPLEXING
           # 删除或重置全局配置
-          rm ${CARGO_HOME}/config.toml || true
-          rm -rf rm ${CARGO_HOME}/registry/* || true
+          rm -f ${CARGO_HOME}/config.toml || true
+          rm -rf ${CARGO_HOME}/registry/* || true
+      - name: Update Rust toolchain
+        run: |
+          rustup self update
+          rustup update nightly
+          rustup default nightly
+      - name: Install cargo-binutils
+        run: |
+          cargo install cargo-binutils
       - uses: actions/checkout@v4
+      - name: Print Cargo source info
+        run: |
+          echo "==== Print Cargo source info ===="
+          cargo search test -v || echo "cargo search failed"
+          echo "==== End Cargo source info ===="
       - name: Run tests
         run: |
           qemu-system-riscv64 --version
